@@ -94,11 +94,12 @@ impl Resources for System {
 
     fn get_cpu_temperature_percent(&self) -> f32 {
         let components = self.get_components();
-        components
+        (components
             .iter()
             .find(|cmp| cmp.get_label().contains("Package id"))
             .unwrap_or(components.first().unwrap())
             .get_temperature()
-            / 100.0
+            / 90.0)
+            .clamp(0.0, 1.0)
     }
 }
