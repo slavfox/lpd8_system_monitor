@@ -33,6 +33,20 @@ macro_rules! pad_worker {
     }};
 }
 
+macro_rules! cpu_core {
+    ($ident:ident, $cpu_usages:expr, $idx:expr) => {{
+        let mut $ident = $ident.lock().unwrap();
+        *$ident = $cpu_usages[$idx];
+    }};
+}
+
+macro_rules! get_resource {
+    ($ident:ident, $fun:ident, $system:expr) => {{
+        let mut $ident = $ident.lock().unwrap();
+        *$ident = $fun(&mut $system);
+    }};
+}
+
 fn connect(
     client_name: &str,
 ) -> Result<MidiOutputConnection, ConnectError<MidiOutput>> {
@@ -112,42 +126,23 @@ fn main() {
                 system.refresh_all();
                 {
                     let cpu_usages = get_core_usage_percent(&mut system);
-                    {
-                        let mut core1_usage = core1_usage.lock().unwrap();
-                        *core1_usage = cpu_usages[0];
-                    }
-                    {
-                        let mut core2_usage = core2_usage.lock().unwrap();
-                        *core2_usage = cpu_usages[1];
-                    }
-                    {
-                        let mut core3_usage = core3_usage.lock().unwrap();
-                        *core3_usage = cpu_usages[2];
-                    }
-                    {
-                        let mut core4_usage = core4_usage.lock().unwrap();
-                        *core4_usage = cpu_usages[3];
-                    }
-
+                    cpu_core!(core1_usage, cpu_usages, 0);
+                    cpu_core!(core2_usage, cpu_usages, 1);
+                    cpu_core!(core3_usage, cpu_usages, 2);
+                    cpu_core!(core4_usage, cpu_usages, 3);
                     {
                         let mut cpu_usage = cpu_usage.lock().unwrap();
                         *cpu_usage = cpu_usages.iter().sum::<f32>()
                             / cpu_usages.len() as f32;
                     }
                 }
-                {
-                    let mut cpu_temp = cpu_temp.lock().unwrap();
-                    *cpu_temp = get_cpu_temperature_percent(&mut system);
-                }
-                {
-                    let mut memory_usage = memory_usage.lock().unwrap();
-                    *memory_usage = get_memory_usage_percent(&mut system);
-                }
-                {
-                    let mut network_usage = network_usage.lock().unwrap();
-                    *network_usage =
-                        get_network_transmitted_percent(&mut system);
-                }
+                get_resource!(cpu_temp, get_cpu_temperature_percent, system);
+                get_resource!(memory_usage, get_memory_usage_percent, system);
+                get_resource!(
+                    network_usage,
+                    get_network_transmitted_percent,
+                    system
+                );
                 sleep(Duration::from_millis(REFRESH_INTERVAL));
             }
         }))
