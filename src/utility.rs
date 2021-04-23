@@ -3,11 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
 // Copyright 2021, Slavfox.
-use crate::utility::Pad::Pad4;
-use sysinfo::{
-    ComponentExt, NetworkExt, NetworksExt, ProcessExt, ProcessorExt, System,
-    SystemExt,
-};
+use sysinfo::{ComponentExt, NetworkExt, ProcessorExt, System, SystemExt};
 
 pub enum Pad {
     Pad1,

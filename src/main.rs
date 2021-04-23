@@ -11,11 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{sleep, spawn, JoinHandle};
 use std::time::Duration;
 
-use midir::{
-    ConnectError, MidiOutput, MidiOutputConnection, MidiOutputPort,
-    PortInfoError,
-};
-use sysinfo::{ProcessExt, RefreshKind, System, SystemExt};
+use midir::{ConnectError, MidiOutput, MidiOutputConnection};
+use sysinfo::{RefreshKind, System, SystemExt};
 
 use utility::{
     get_core_usage_percent, get_cpu_temperature_percent,
@@ -28,9 +25,8 @@ macro_rules! pad_worker {
         let $src = Arc::clone(&$src);
         $threads.push(spawn(move || {
             let mut connection = connect(stringify!($src)).unwrap();
-            let mut duty_cycle = 0f32;
             loop {
-                duty_cycle = $src.lock().unwrap().clone();
+                let duty_cycle = $src.lock().unwrap().clone();
                 pwm(&mut connection, duty_cycle, $pad);
             }
         }))
@@ -63,13 +59,13 @@ fn connect(
 }
 
 fn pwm(conn: &mut MidiOutputConnection, duty_cycle: f32, pad: Pad) {
-    if duty_cycle / 2.0 > 0.0 {
-        conn.send(&note_on(&pad));
+    if duty_cycle > 0.0 {
+        conn.send(&note_on(&pad)).unwrap();
     }
-    let on_time = (DURATION as f32 * duty_cycle / 2.0) as u64;
+    let on_time = (DURATION as f32 * duty_cycle) as u64;
     sleep(Duration::from_millis(on_time));
-    if duty_cycle / 2.0 < 1.0 {
-        conn.send(&note_off(&pad));
+    if duty_cycle < 1.0 {
+        conn.send(&note_off(&pad)).unwrap();
         sleep(Duration::from_millis(DURATION - on_time));
     }
 }
