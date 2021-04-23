@@ -33,34 +33,72 @@ pub fn note_on(pad: &Pad) -> [u8; 3] { [0x90, pad_to_midi_note(pad), 0x7F] }
 
 pub fn note_off(pad: &Pad) -> [u8; 3] { [0x80, pad_to_midi_note(pad), 0x7F] }
 
-pub fn get_core_usage_percent(system: &mut System) -> Vec<f32> {
-    system
-        .get_processors()
-        .iter()
-        .map(|proc| proc.get_cpu_usage() / 100.0)
-        .collect()
+pub trait Resources {
+    fn get_cpu_usage_percent(&self) -> f32;
+    fn get_memory_usage_percent(&self) -> f32;
+    fn get_network_received_percent(&self) -> f32;
+    fn get_network_transmitted_percent(&self) -> f32;
+    fn get_network_received_error_percent(&self) -> f32;
+    fn get_network_transmitted_error_percent(&self) -> f32;
+    fn get_cpu_temperature_percent(&self) -> f32;
 }
 
-pub fn get_memory_usage_percent(system: &mut System) -> f32 {
-    (system.get_used_memory() as f32) / (system.get_total_memory() as f32)
-}
-
-pub fn get_network_transmitted_percent(system: &mut System) -> f32 {
-    let networks = system.get_networks();
-    for (_, network) in networks {
-        if network.get_transmitted() > 0 {
-            return 1.0;
-        }
+impl Resources for System {
+    fn get_cpu_usage_percent(&self) -> f32 {
+        self.get_global_processor_info().get_cpu_usage()
     }
-    0.0
-}
 
-pub fn get_cpu_temperature_percent(system: &mut System) -> f32 {
-    let components = system.get_components();
-    components
-        .iter()
-        .find(|cmp| cmp.get_label().contains("Package id"))
-        .unwrap_or(components.first().unwrap())
-        .get_temperature()
-        / 100.0
+    fn get_memory_usage_percent(&self) -> f32 {
+        (self.get_used_memory() as f32) / (self.get_total_memory() as f32)
+    }
+
+    fn get_network_received_percent(&self) -> f32 {
+        let networks = self.get_networks();
+        for (_, network) in networks {
+            if network.get_packets_received() > 0 {
+                return 1.0;
+            }
+        }
+        0.0
+    }
+
+    fn get_network_transmitted_percent(&self) -> f32 {
+        let networks = self.get_networks();
+        for (_, network) in networks {
+            if network.get_packets_transmitted() > 0 {
+                return 1.0;
+            }
+        }
+        0.0
+    }
+
+    fn get_network_received_error_percent(&self) -> f32 {
+        let networks = self.get_networks();
+        for (_, network) in networks {
+            if network.get_errors_on_received() > 0 {
+                return 1.0;
+            }
+        }
+        0.0
+    }
+
+    fn get_network_transmitted_error_percent(&self) -> f32 {
+        let networks = self.get_networks();
+        for (_, network) in networks {
+            if network.get_errors_on_transmitted() > 0 {
+                return 1.0;
+            }
+        }
+        0.0
+    }
+
+    fn get_cpu_temperature_percent(&self) -> f32 {
+        let components = self.get_components();
+        components
+            .iter()
+            .find(|cmp| cmp.get_label().contains("Package id"))
+            .unwrap_or(components.first().unwrap())
+            .get_temperature()
+            / 100.0
+    }
 }

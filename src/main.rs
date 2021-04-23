@@ -7,44 +7,31 @@
 
 mod utility;
 
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc;
 use std::thread::{sleep, spawn, JoinHandle};
 use std::time::Duration;
 
 use midir::{ConnectError, MidiOutput, MidiOutputConnection};
 use sysinfo::{RefreshKind, System, SystemExt};
 
-use utility::{
-    get_core_usage_percent, get_cpu_temperature_percent,
-    get_memory_usage_percent, get_network_transmitted_percent, note_off,
-    note_on, Pad,
-};
+use utility::{note_off, note_on, Pad, Resources};
 
 macro_rules! pad_worker {
-    ($threads:expr, $src:ident, $pad:expr) => {{
-        let $src = Arc::clone(&$src);
+    ($threads:expr, $src:ident, $pad:expr) => {
         $threads.push(spawn(move || {
             let mut connection = connect(stringify!($src)).unwrap();
+            let mut duty_cycle = 0f32;
             loop {
-                let duty_cycle = $src.lock().unwrap().clone();
+                match $src.try_recv() {
+                    Ok(val) => {
+                        duty_cycle = val;
+                    }
+                    Err(_) => {}
+                }
                 pwm(&mut connection, duty_cycle, $pad);
             }
         }))
-    }};
-}
-
-macro_rules! cpu_core {
-    ($ident:ident, $cpu_usages:expr, $idx:expr) => {{
-        let mut $ident = $ident.lock().unwrap();
-        *$ident = $cpu_usages[$idx];
-    }};
-}
-
-macro_rules! get_resource {
-    ($ident:ident, $fun:ident, $system:expr) => {{
-        let mut $ident = $ident.lock().unwrap();
-        *$ident = $fun(&mut $system);
-    }};
+    };
 }
 
 fn connect(
@@ -76,77 +63,75 @@ fn pwm(conn: &mut MidiOutputConnection, duty_cycle: f32, pad: Pad) {
     if duty_cycle > 0.0 {
         conn.send(&note_on(&pad)).unwrap();
     }
-    let on_time = (DURATION as f32 * duty_cycle) as u64;
+    let on_time = (DURATION as f32 * duty_cycle * duty_cycle) as u64;
     sleep(Duration::from_millis(on_time));
     if duty_cycle < 1.0 {
         conn.send(&note_off(&pad)).unwrap();
         sleep(Duration::from_millis(DURATION - on_time));
     }
 }
-const DURATION: u64 = 10;
-const REFRESH_INTERVAL: u64 = 40;
+const DURATION: u64 = 20;
+const REFRESH_INTERVAL: u64 = 100;
 
 fn main() {
-    let cpu_usage = Arc::new(Mutex::new(0f32));
-    let core1_usage = Arc::new(Mutex::new(0f32));
-    let core2_usage = Arc::new(Mutex::new(0f32));
-    let core3_usage = Arc::new(Mutex::new(0f32));
-    let core4_usage = Arc::new(Mutex::new(0f32));
-    let cpu_temp = Arc::new(Mutex::new(0f32));
-    let memory_usage = Arc::new(Mutex::new(0f32));
-    let network_usage = Arc::new(Mutex::new(0f32));
+    let (cpu_usage_tx, cpu_usage_rx) = mpsc::channel();
+    let (cpu_temp_tx, cpu_temp_rx) = mpsc::channel();
+    let (memory_usage_tx, memory_usage_rx) = mpsc::channel();
+    let (network_sent_tx, network_sent_rx) = mpsc::channel();
+    let (network_received_tx, network_received_rx) = mpsc::channel();
+    let (network_sent_errors_tx, network_sent_errors_rx) = mpsc::channel();
+    let (network_received_errors_tx, network_received_errors_rx) =
+        mpsc::channel();
+    let (clock_tx, clock_rx) = mpsc::channel();
 
     let mut threads: Vec<JoinHandle<()>> = vec![];
-    pad_worker!(threads, cpu_usage, Pad::Pad1);
-    pad_worker!(threads, cpu_temp, Pad::Pad2);
-    pad_worker!(threads, memory_usage, Pad::Pad3);
-    pad_worker!(threads, network_usage, Pad::Pad4);
-    pad_worker!(threads, core1_usage, Pad::Pad5);
-    pad_worker!(threads, core2_usage, Pad::Pad6);
-    pad_worker!(threads, core3_usage, Pad::Pad7);
-    pad_worker!(threads, core4_usage, Pad::Pad8);
-    {
-        let cpu_usage = Arc::clone(&cpu_usage);
-        let core1_usage = Arc::clone(&core1_usage);
-        let core2_usage = Arc::clone(&core2_usage);
-        let core3_usage = Arc::clone(&core3_usage);
-        let core4_usage = Arc::clone(&core4_usage);
-        let cpu_temp = Arc::clone(&cpu_temp);
-        let memory_usage = Arc::clone(&memory_usage);
-        let network_usage = Arc::clone(&network_usage);
-        threads.push(spawn(move || {
-            let mut system = System::new_with_specifics(
-                RefreshKind::everything()
-                    .without_disks()
-                    .without_disks_list()
-                    .without_processes()
-                    .without_users_list(),
-            );
-            loop {
-                system.refresh_all();
-                {
-                    let cpu_usages = get_core_usage_percent(&mut system);
-                    cpu_core!(core1_usage, cpu_usages, 0);
-                    cpu_core!(core2_usage, cpu_usages, 1);
-                    cpu_core!(core3_usage, cpu_usages, 2);
-                    cpu_core!(core4_usage, cpu_usages, 3);
-                    {
-                        let mut cpu_usage = cpu_usage.lock().unwrap();
-                        *cpu_usage = cpu_usages.iter().sum::<f32>()
-                            / cpu_usages.len() as f32;
-                    }
-                }
-                get_resource!(cpu_temp, get_cpu_temperature_percent, system);
-                get_resource!(memory_usage, get_memory_usage_percent, system);
-                get_resource!(
-                    network_usage,
-                    get_network_transmitted_percent,
-                    system
-                );
-                sleep(Duration::from_millis(REFRESH_INTERVAL));
-            }
-        }))
-    }
+    pad_worker!(threads, cpu_usage_rx, Pad::Pad1);
+    pad_worker!(threads, cpu_temp_rx, Pad::Pad2);
+    pad_worker!(threads, memory_usage_rx, Pad::Pad3);
+    pad_worker!(threads, clock_rx, Pad::Pad4);
+    pad_worker!(threads, network_sent_rx, Pad::Pad5);
+    pad_worker!(threads, network_received_rx, Pad::Pad6);
+    pad_worker!(threads, network_sent_errors_rx, Pad::Pad7);
+    pad_worker!(threads, network_received_errors_rx, Pad::Pad8);
+    threads.push(spawn(move || loop {
+        clock_tx.send(1.0).unwrap();
+        clock_tx.send(0.0).unwrap();
+        sleep(Duration::from_secs(1));
+    }));
+    threads.push(spawn(move || {
+        let mut system = System::new_with_specifics(
+            RefreshKind::everything()
+                .without_disks()
+                .without_disks_list()
+                .without_processes()
+                .without_users_list(),
+        );
+        loop {
+            system.refresh_all();
+            cpu_usage_tx
+                .send(system.get_cpu_usage_percent() / 100.0)
+                .unwrap();
+            cpu_temp_tx
+                .send(system.get_cpu_temperature_percent())
+                .unwrap();
+            memory_usage_tx
+                .send(system.get_memory_usage_percent())
+                .unwrap();
+            network_sent_tx
+                .send(system.get_network_transmitted_percent())
+                .unwrap();
+            network_received_tx
+                .send(system.get_network_received_percent())
+                .unwrap();
+            network_sent_errors_tx
+                .send(system.get_network_transmitted_error_percent())
+                .unwrap();
+            network_received_errors_tx
+                .send(system.get_network_received_error_percent())
+                .unwrap();
+            sleep(Duration::from_millis(REFRESH_INTERVAL));
+        }
+    }));
     for thread in threads {
         thread.join().unwrap();
     }
